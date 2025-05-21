@@ -18,8 +18,10 @@
     }
     .panel-wrapper {
       position: relative;
-      flex: 1;
       display: flex;
+      /* flex-basis will be set inline */
+      flex-grow: 0;
+      flex-shrink: 0;
     }
     .panel {
       flex: 1;
@@ -76,7 +78,7 @@
   </style>
 </head>
 <body>
-  <div class="container">
+  <div class="container" id="container">
     <div class="panel-wrapper" id="wrapper-left">
       <div id="left" class="panel" contenteditable="plaintext-only">左の文章をここに入力してください。</div>
       <div class="minimap" id="minimap-left"></div>
@@ -94,31 +96,52 @@
   </div>
   <script>
     (function() {
-      const container = document.querySelector('.container');
-      const wrappers = { left: document.getElementById('wrapper-left'), right: document.getElementById('wrapper-right') };
+      const container = document.getElementById('container');
+      const wrapperLeft = document.getElementById('wrapper-left');
+      const wrapperRight = document.getElementById('wrapper-right');
+      const divider = document.getElementById('divider');
       const panels = { left: document.getElementById('left'), right: document.getElementById('right') };
       const minimaps = { left: document.getElementById('minimap-left'), right: document.getElementById('minimap-right') };
-      const divider = document.getElementById('divider');
       const tooltip = document.getElementById('tooltip');
       const colorPicker = document.getElementById('colorPicker');
       const applyBtn = document.getElementById('applyBtn');
       const removeBtn = document.getElementById('removeBtn');
+
       let isDragging = false;
+      let minWidth = 100;
       let selectedText = '';
       let currentSide = null;
       const rules = { left: [], right: [] };
 
+      // Initialize wrappers to equal width
+      const init = () => {
+        const cw = container.clientWidth;
+        const dw = divider.getBoundingClientRect().width;
+        const half = (cw - dw) / 2;
+        wrapperLeft.style.flexBasis = `${half}px`;
+        wrapperRight.style.flexBasis = `${half}px`;
+      };
+      init();
+      window.addEventListener('resize', init);
+
       // Divider drag
-      divider.addEventListener('mousedown', () => { isDragging = true; document.body.style.cursor = 'ew-resize'; });
-      document.addEventListener('mouseup', () => { isDragging = false; document.body.style.cursor = ''; });
+      divider.addEventListener('mousedown', () => {
+        isDragging = true;
+        document.body.style.cursor = 'ew-resize';
+      });
+      document.addEventListener('mouseup', () => {
+        isDragging = false;
+        document.body.style.cursor = '';
+      });
       document.addEventListener('mousemove', e => {
         if (!isDragging) return;
         const rect = container.getBoundingClientRect();
-        let x = e.clientX - rect.left;
-        x = Math.max(100, Math.min(x, rect.width - 100));
-        const pct = x / rect.width * 100;
-        wrappers.left.style.flex = `0 0 ${pct}%`;
-        wrappers.right.style.flex = `0 0 ${100 - pct}%`;
+        const dw = divider.getBoundingClientRect().width;
+        const total = rect.width - dw;
+        let offset = e.clientX - rect.left - dw / 2;
+        offset = Math.max(minWidth, Math.min(offset, total - minWidth));
+        wrapperLeft.style.flexBasis = `${offset}px`;
+        wrapperRight.style.flexBasis = `${total - offset}px`;
       });
 
       // Selection tooltip
@@ -126,17 +149,16 @@
         const sel = window.getSelection();
         const text = sel.toString().trim();
         if (!text) { tooltip.style.display = 'none'; return; }
-        // Determine side
         const node = sel.anchorNode;
         const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-        if (el && el.closest('#left')) currentSide = 'left';
-        else if (el && el.closest('#right')) currentSide = 'right';
+        if (el.closest('#left')) currentSide = 'left';
+        else if (el.closest('#right')) currentSide = 'right';
         else { tooltip.style.display = 'none'; return; }
         selectedText = text;
         const range = sel.getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-        tooltip.style.top = `${rect.bottom + window.scrollY + 5}px`;
-        tooltip.style.left = `${rect.left + window.scrollX}px`;
+        const r = range.getBoundingClientRect();
+        tooltip.style.top = `${r.bottom + window.scrollY + 5}px`;
+        tooltip.style.left = `${r.left + window.scrollX}px`;
         applyBtn.style.display = 'inline-block';
         const sideRules = rules[currentSide] || [];
         removeBtn.style.display = sideRules.some(r => r.text === selectedText) ? 'inline-block' : 'none';
@@ -170,10 +192,8 @@
           const panel = panels[side];
           const minimap = minimaps[side];
           const sideRules = rules[side] || [];
-          // Preserve scroll
           const scrollTop = panel.scrollTop;
-          const base = panel.textContent;
-          let html = escapeHTML(base);
+          let html = escapeHTML(panel.textContent);
           sideRules.forEach(rule => {
             const re = new RegExp(escapeRegExp(rule.text), 'g');
             html = html.replace(re,
