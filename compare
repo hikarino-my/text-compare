@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dual Text Highlighter with Minimap</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+    .container {
+      display: flex;
+      height: 100%;
+      width: 100%;
+    }
+    .panel-wrapper {
+      position: relative;
+      flex: 1;
+      display: flex;
+    }
+    .panel {
+      flex: 1;
+      overflow: auto;
+      padding: 10px;
+      box-sizing: border-box;
+      white-space: pre-wrap;
+    }
+    .minimap {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 30px;
+      height: 100%;
+      pointer-events: none;
+      background: rgba(127,127,127,0.5);
+    }
+    .minimap .marker {
+      position: absolute;
+      width: 8px;
+      left: calc(50% - 4px);
+    }
+    .minimap .viewport {
+      position: absolute;
+      width: 12px;
+      left: calc(50% - 6px);
+      border: 1px solid rgba(0,0,0,0.3);
+      background: rgba(0,0,0,0.1);
+    }
+    .divider {
+      width: 5px;
+      padding: 0 10px;
+      background: #ccc;
+      cursor: ew-resize;
+      box-sizing: content-box;
+    }
+    .tooltip {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      padding: 5px;
+      background: #fff;
+      border: 1px solid #999;
+      border-radius: 3px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    .tooltip input,
+    .tooltip button {
+      margin-right: 5px;
+    }
+    .highlight {
+      /* 背景色はインライン */
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="panel-wrapper" id="wrapper-left">
+      <div id="left" class="panel" contenteditable="plaintext-only">左の文章をここに入力してください。</div>
+      <div class="minimap" id="minimap-left"></div>
+    </div>
+    <div class="divider" id="divider"></div>
+    <div class="panel-wrapper" id="wrapper-right">
+      <div id="right" class="panel" contenteditable="plaintext-only">右の文章をここに入力してください。</div>
+      <div class="minimap" id="minimap-right"></div>
+    </div>
+  </div>
+  <div id="tooltip" class="tooltip" style="display:none;">
+    <input type="color" id="colorPicker" value="#ffff00">
+    <button id="applyBtn">適用</button>
+    <button id="removeBtn" style="display:none;">解除</button>
+  </div>
+  <script>
+    (function() {
+      const container = document.querySelector('.container');
+      const wrappers = { left: document.getElementById('wrapper-left'), right: document.getElementById('wrapper-right') };
+      const panels = { left: document.getElementById('left'), right: document.getElementById('right') };
+      const minimaps = { left: document.getElementById('minimap-left'), right: document.getElementById('minimap-right') };
+      const divider = document.getElementById('divider');
+      const tooltip = document.getElementById('tooltip');
+      const colorPicker = document.getElementById('colorPicker');
+      const applyBtn = document.getElementById('applyBtn');
+      const removeBtn = document.getElementById('removeBtn');
+      let isDragging = false;
+      let selectedText = '';
+      let currentSide = null;
+      const rules = { left: [], right: [] };
+
+      // Divider drag
+      divider.addEventListener('mousedown', () => { isDragging = true; document.body.style.cursor = 'ew-resize'; });
+      document.addEventListener('mouseup', () => { isDragging = false; document.body.style.cursor = ''; });
+      document.addEventListener('mousemove', e => {
+        if (!isDragging) return;
+        const rect = container.getBoundingClientRect();
+        let x = e.clientX - rect.left;
+        x = Math.max(100, Math.min(x, rect.width - 100));
+        const pct = x / rect.width * 100;
+        wrappers.left.style.flex = `0 0 ${pct}%`;
+        wrappers.right.style.flex = `0 0 ${100 - pct}%`;
+      });
+
+      // Selection tooltip
+      document.addEventListener('mouseup', () => {
+        const sel = window.getSelection();
+        const text = sel.toString().trim();
+        if (!text) { tooltip.style.display = 'none'; return; }
+        // Determine side
+        const node = sel.anchorNode;
+        const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        if (el && el.closest('#left')) currentSide = 'left';
+        else if (el && el.closest('#right')) currentSide = 'right';
+        else { tooltip.style.display = 'none'; return; }
+        selectedText = text;
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        tooltip.style.top = `${rect.bottom + window.scrollY + 5}px`;
+        tooltip.style.left = `${rect.left + window.scrollX}px`;
+        applyBtn.style.display = 'inline-block';
+        const sideRules = rules[currentSide] || [];
+        removeBtn.style.display = sideRules.some(r => r.text === selectedText) ? 'inline-block' : 'none';
+        tooltip.style.display = 'flex';
+      });
+
+      // Apply highlight
+      applyBtn.addEventListener('click', () => {
+        if (!currentSide) return;
+        const color = colorPicker.value;
+        const sideRules = rules[currentSide];
+        const idx = sideRules.findIndex(r => r.text === selectedText);
+        if (idx >= 0) sideRules[idx].color = color;
+        else sideRules.push({ text: selectedText, color });
+        applyAll();
+        tooltip.style.display = 'none';
+      });
+
+      // Remove highlight
+      removeBtn.addEventListener('click', () => {
+        if (!currentSide) return;
+        const sideRules = rules[currentSide];
+        const idx = sideRules.findIndex(r => r.text === selectedText);
+        if (idx >= 0) sideRules.splice(idx, 1);
+        applyAll();
+        tooltip.style.display = 'none';
+      });
+
+      function applyAll() {
+        ['left','right'].forEach(side => {
+          const panel = panels[side];
+          const minimap = minimaps[side];
+          const sideRules = rules[side] || [];
+          // Preserve scroll
+          const scrollTop = panel.scrollTop;
+          const base = panel.textContent;
+          let html = escapeHTML(base);
+          sideRules.forEach(rule => {
+            const re = new RegExp(escapeRegExp(rule.text), 'g');
+            html = html.replace(re,
+              `<span class="highlight" data-color="${rule.color}" style="background-color:${rule.color}">${rule.text}</span>`);
+          });
+          panel.innerHTML = html;
+          panel.scrollTop = scrollTop;
+          buildMinimap(panel, minimap);
+          panel.removeEventListener('scroll', panel._scroll);
+          panel._scroll = () => updateViewport(panel, minimap);
+          panel.addEventListener('scroll', panel._scroll);
+          updateViewport(panel, minimap);
+        });
+      }
+
+      function buildMinimap(panel, minimap) {
+        minimap.innerHTML = '';
+        const ph = panel.scrollHeight;
+        const mh = minimap.clientHeight;
+        panel.querySelectorAll('span.highlight').forEach(span => {
+          const y = span.offsetTop / ph * mh;
+          const m = document.createElement('div');
+          m.className = 'marker';
+          m.style.top = `${y}px`;
+          m.style.height = '2px';
+          m.style.backgroundColor = span.dataset.color;
+          minimap.appendChild(m);
+        });
+      }
+
+      function updateViewport(panel, minimap) {
+        let vp = minimap.querySelector('.viewport');
+        if (!vp) { vp = document.createElement('div'); vp.className = 'viewport'; minimap.appendChild(vp); }
+        const h = panel.clientHeight / panel.scrollHeight * minimap.clientHeight;
+        const t = panel.scrollTop / panel.scrollHeight * minimap.clientHeight;
+        vp.style.height = `${h}px`;
+        vp.style.top = `${t}px`;
+      }
+
+      function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&'); }
+      function escapeHTML(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+      applyAll();
+    })();
+  </script>
+</body>
+</html>
