@@ -3,23 +3,68 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dual Text Highlighter with Minimap</title>
+  <title>Dual Text Highlighter with Minimap and Sidebar</title>
   <style>
     html, body {
       margin: 0;
       height: 100%;
       overflow: hidden;
       font-family: sans-serif;
+      --side-barwidth: 50px; 
     }
+    /* Sidebar */
+    #sidebar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: var(--side-barwidth);         /* 折りたたみ時の幅 */
+      background: #333;
+      color: #fff;
+      transition: width 0.3s ease;
+      z-index: 1000;
+      overflow: hidden;
+    }
+    #sidebar.open {
+      width: 200px;       /* 展開時の幅 */
+    }
+    #sidebar ul {
+      list-style: none;
+      padding: 0;
+      margin: 50px 0 0 0;
+    }
+    #sidebar li {
+      padding: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    #sidebar #toggleSidebar {
+      position: absolute;
+      top: 10px;
+      left: 0px;
+      font-size: 20px;
+      width: var(--side-barwidth);
+      height: 30px;
+      background: #333;
+      border: none;
+      color: #fff;
+      cursor: pointer;
+      border-radius: 0 5px 5px 0;
+    }
+    /* Container & Panels */
     .container {
       display: flex;
       height: 100%;
-      width: 100%;
+      width: 95%;
+      margin-left: var(--side-barwidth);  /* 折りたたみ時のオフセット */
+      transition: margin-left 0.3s ease;
+    }
+    #sidebar.open ~ .container {
+      margin-left: 200px; /* 展開時のオフセット */
     }
     .panel-wrapper {
       position: relative;
       display: flex;
-      /* flex-basis will be set inline */
       flex-grow: 0;
       flex-shrink: 0;
     }
@@ -78,6 +123,15 @@
   </style>
 </head>
 <body>
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <button id="toggleSidebar">☰</button>
+    <ul>
+      <li><button id="downloadBtn">色分け保存</button></li>
+      <li><input id="file_load" type="file"></li>
+      <li>メニュー項目3</li>
+    </ul>
+  </div>
   <div class="container" id="container">
     <div class="panel-wrapper" id="wrapper-left">
       <div id="left" class="panel" contenteditable="plaintext-only">左の文章をここに入力してください。</div>
@@ -96,6 +150,13 @@
   </div>
   <script>
     (function() {
+      // Sidebar toggle
+      const sidebar = document.getElementById('sidebar');
+      const toggleBtn = document.getElementById('toggleSidebar');
+      toggleBtn.addEventListener('click', () => {
+        sidebar.classList.toggle('open');
+      });
+
       const container = document.getElementById('container');
       const wrapperLeft = document.getElementById('wrapper-left');
       const wrapperRight = document.getElementById('wrapper-right');
@@ -106,6 +167,8 @@
       const colorPicker = document.getElementById('colorPicker');
       const applyBtn = document.getElementById('applyBtn');
       const removeBtn = document.getElementById('removeBtn');
+      const downloadBtn = document.getElementById('downloadBtn');
+      const fileloadBtn = document.getElementById('file_load');
 
       let isDragging = false;
       let minWidth = 100;
@@ -235,6 +298,33 @@
 
       function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&'); }
       function escapeHTML(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+      downloadBtn.addEventListener('click', () => {
+        const output_dict = {...rules, leftText: panels.left.textContent, rightText: panels.right.textContent};
+        const blob = new Blob([JSON.stringify(output_dict, null, '  ')],
+        {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'sample.json';
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+
+      fileloadBtn.addEventListener("change", (event) => {
+        const input_file = event.target.files[0];
+        const f_reader = new FileReader();
+        f_reader.onload = (event) => {
+          const parse_result = JSON.parse(event.target.result);
+          rules.left = parse_result.left;
+          rules.right = parse_result.right;
+          panels.left.textContent = parse_result.leftText;
+          panels.right.textContent = parse_result.rightText;
+          applyAll();
+        };
+        // ファイル内容読み込み実施
+        f_reader.readAsText(input_file);
+      });
 
       applyAll();
     })();
