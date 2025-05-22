@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dual Text Highlighter with Minimap and Sidebar</title>
+  <title>Dual Text Highlighter</title>
   <style>
     html, body {
       margin: 0;
@@ -34,7 +34,7 @@
       margin: 50px 0 0 0;
     }
     #sidebar li {
-      padding: 10px;
+      padding: 10px 3px;
       white-space: nowrap;
       overflow: hidden;
     }
@@ -50,6 +50,9 @@
       color: #fff;
       cursor: pointer;
       border-radius: 0 5px 5px 0;
+    }
+    #file_load {
+      display: none;
     }
     /* Container & Panels */
     .container {
@@ -71,7 +74,7 @@
     .panel {
       flex: 1;
       overflow: auto;
-      padding: 10px;
+      padding: 10px 30px 10px 10px;
       box-sizing: border-box;
       white-space: pre-wrap;
     }
@@ -127,9 +130,8 @@
   <div id="sidebar">
     <button id="toggleSidebar">☰</button>
     <ul>
-      <li><button id="downloadBtn">色分け保存</button></li>
-      <li><input id="file_load" type="file"></li>
-      <li>メニュー項目3</li>
+      <li><button id="downloadBtn">保存</button></li>
+      <li><button id="pseudoLoadBtn">読込</button><input id="file_load" type="file"></li>
     </ul>
   </div>
   <div class="container" id="container">
@@ -157,6 +159,7 @@
         sidebar.classList.toggle('open');
       });
 
+      // Splitter
       const container = document.getElementById('container');
       const wrapperLeft = document.getElementById('wrapper-left');
       const wrapperRight = document.getElementById('wrapper-right');
@@ -167,11 +170,12 @@
       const colorPicker = document.getElementById('colorPicker');
       const applyBtn = document.getElementById('applyBtn');
       const removeBtn = document.getElementById('removeBtn');
+      const pseudoLoadBtn = document.getElementById('pseudoLoadBtn');
       const downloadBtn = document.getElementById('downloadBtn');
       const fileloadBtn = document.getElementById('file_load');
 
       let isDragging = false;
-      let minWidth = 100;
+      const minWidth = 100;
       let selectedText = '';
       let currentSide = null;
       const rules = { left: [], right: [] };
@@ -179,7 +183,7 @@
       // Initialize wrappers to equal width
       const init = () => {
         const cw = container.clientWidth;
-        const dw = divider.getBoundingClientRect().width;
+        const dw = divider.offsetWidth;
         const half = (cw - dw) / 2;
         wrapperLeft.style.flexBasis = `${half}px`;
         wrapperRight.style.flexBasis = `${half}px`;
@@ -199,7 +203,7 @@
       document.addEventListener('mousemove', e => {
         if (!isDragging) return;
         const rect = container.getBoundingClientRect();
-        const dw = divider.getBoundingClientRect().width;
+        const dw = divider.offsetWidth;
         const total = rect.width - dw;
         let offset = e.clientX - rect.left - dw / 2;
         offset = Math.max(minWidth, Math.min(offset, total - minWidth));
@@ -213,18 +217,16 @@
         const text = sel.toString().trim();
         if (!text) { tooltip.style.display = 'none'; return; }
         const node = sel.anchorNode;
-        const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
         if (el.closest('#left')) currentSide = 'left';
         else if (el.closest('#right')) currentSide = 'right';
         else { tooltip.style.display = 'none'; return; }
         selectedText = text;
-        const range = sel.getRangeAt(0);
-        const r = range.getBoundingClientRect();
+        const r = sel.getRangeAt(0).getBoundingClientRect();
         tooltip.style.top = `${r.bottom + window.scrollY + 5}px`;
         tooltip.style.left = `${r.left + window.scrollX}px`;
         applyBtn.style.display = 'inline-block';
-        const sideRules = rules[currentSide] || [];
-        removeBtn.style.display = sideRules.some(r => r.text === selectedText) ? 'inline-block' : 'none';
+        removeBtn.style.display = rules[currentSide].some(r => r.text === selectedText) ? 'inline-block' : 'none';
         tooltip.style.display = 'flex';
       });
 
@@ -236,7 +238,7 @@
         const idx = sideRules.findIndex(r => r.text === selectedText);
         if (idx >= 0) sideRules[idx].color = color;
         else sideRules.push({ text: selectedText, color });
-        applyAll();
+        updateAll();
         tooltip.style.display = 'none';
       });
 
@@ -246,34 +248,61 @@
         const sideRules = rules[currentSide];
         const idx = sideRules.findIndex(r => r.text === selectedText);
         if (idx >= 0) sideRules.splice(idx, 1);
-        applyAll();
+        updateAll();
         tooltip.style.display = 'none';
       });
 
-      function applyAll() {
+      function updateAll(){
         ['left','right'].forEach(side => {
           const panel = panels[side];
           const minimap = minimaps[side];
-          const sideRules = rules[side] || [];
-          const scrollTop = panel.scrollTop;
-          let html = escapeHTML(panel.textContent);
-          sideRules.forEach(rule => {
-            const re = new RegExp(escapeRegExp(rule.text), 'g');
-            html = html.replace(re,
-              `<span class="highlight" data-color="${rule.color}" style="background-color:${rule.color}">${rule.text}</span>`);
+          const sideRules = rules[side];
+          const text = panel.textContent;
+          // initialize per-char colors
+          const charColors = Array(text.length).fill(null);
+          // apply rules in order, later overrides
+          sideRules.forEach(rule=>{
+            let idx = 0;
+            while((idx = text.indexOf(rule.text, idx)) > -1){
+              for(let i=idx; i<idx+rule.text.length; i++) charColors[i] = rule.color;
+              idx += rule.text.length;
+            }
           });
-          panel.innerHTML = html;
-          panel.scrollTop = scrollTop;
+          // build segments by consecutive same-color chars
+          const segments = [];
+          let start = 0;
+          let currColor = charColors[0];
+          for(let i=1; i<=text.length; i++){
+            if(i===text.length || charColors[i] !== currColor){
+              const segText = text.slice(start, i);
+              segments.push({ text: segText, color: currColor });
+              start = i;
+              currColor = charColors[i];
+            }
+          }
+          // clear and append
+          while(panel.firstChild) panel.removeChild(panel.firstChild);
+          segments.forEach(seg=>{
+            if(seg.color){
+              const span = document.createElement('span');
+              span.className = 'highlight';
+              span.style.backgroundColor = seg.color;
+              span.textContent = seg.text;
+              panel.appendChild(span);
+            } else {
+              panel.appendChild(document.createTextNode(seg.text));
+            }
+          });
           buildMinimap(panel, minimap);
-          panel.removeEventListener('scroll', panel._scroll);
-          panel._scroll = () => updateViewport(panel, minimap);
-          panel.addEventListener('scroll', panel._scroll);
-          updateViewport(panel, minimap);
         });
       }
+      updateAll();
 
-      function buildMinimap(panel, minimap) {
-        minimap.innerHTML = '';
+      // Minimap
+      function buildMinimap(panel, minimap){
+        while(minimap.firstChild) {
+          minimap.removeChild(minimap.firstChild)
+        };
         const ph = panel.scrollHeight;
         const mh = minimap.clientHeight;
         panel.querySelectorAll('span.highlight').forEach(span => {
@@ -282,22 +311,23 @@
           m.className = 'marker';
           m.style.top = `${y}px`;
           m.style.height = '2px';
-          m.style.backgroundColor = span.dataset.color;
+          m.style.backgroundColor = span.style.backgroundColor;
           minimap.appendChild(m);
         });
+        updateViewport(panel, minimap);
       }
-
       function updateViewport(panel, minimap) {
         let vp = minimap.querySelector('.viewport');
-        if (!vp) { vp = document.createElement('div'); vp.className = 'viewport'; minimap.appendChild(vp); }
+        if (!vp) {
+          vp = document.createElement('div');
+          vp.className = 'viewport';
+          minimap.appendChild(vp);
+        }
         const h = panel.clientHeight / panel.scrollHeight * minimap.clientHeight;
         const t = panel.scrollTop / panel.scrollHeight * minimap.clientHeight;
         vp.style.height = `${h}px`;
         vp.style.top = `${t}px`;
       }
-
-      function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&'); }
-      function escapeHTML(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
       downloadBtn.addEventListener('click', () => {
         const output_dict = {...rules, leftText: panels.left.textContent, rightText: panels.right.textContent};
@@ -311,6 +341,10 @@
         URL.revokeObjectURL(url);
       });
 
+      pseudoLoadBtn.addEventListener("click", () => {
+        fileloadBtn.click();
+      });
+
       fileloadBtn.addEventListener("change", (event) => {
         const input_file = event.target.files[0];
         const f_reader = new FileReader();
@@ -320,14 +354,17 @@
           rules.right = parse_result.right;
           panels.left.textContent = parse_result.leftText;
           panels.right.textContent = parse_result.rightText;
-          applyAll();
+          updateAll();
         };
         // ファイル内容読み込み実施
         f_reader.readAsText(input_file);
       });
 
-      applyAll();
-    })();
+
+      Object.values(panels).forEach(p=>{
+        p.addEventListener('scroll', ()=>updateViewport(p, minimaps[p.id]));
+      });
+  })();
   </script>
 </body>
 </html>
